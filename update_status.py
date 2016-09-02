@@ -1,12 +1,10 @@
-#!/usr/bin/env python3
 import json
 import sys
 import time
 import configparser
-from urllib import request
-from urllib import parse
+from urlparse import urlparse as parse
 from datetime import datetime
-
+import requests
 
 class UptimeRobot(object):
     """ Intermediate class for setting uptime stats.
@@ -38,16 +36,16 @@ class UptimeRobot(object):
         url += '&customUptimeRatio={0}'.format(uptime_ratio)
 
         # Verifying in the response is jsonp in otherwise is error
-        response = request.urlopen(url)
-        content = response.read().decode('utf-8')
-        j_content = json.loads(content)
+        response = requests.get(url=url)
+        content = response.text
+        j_content = response.json()
+
         if j_content.get('stat'):
             stat = j_content.get('stat')
             if stat == 'ok':
                 return True, j_content
 
         return False, j_content
-
 
 class CachetHq(object):
     # Uptime Robot status list
@@ -64,8 +62,8 @@ class CachetHq(object):
     CACHET_DOWN = 4
 
     def __init__(self, cachet_api_key, cachet_url):
-        self.cachet_api_key = cachet_api_key
-        self.cachet_url = cachet_url
+        self.cachet_api_key = cachet_api_key or CACHET_API_KEY
+        self.cachet_url = cachet_url or CACHET_URL
 
     def update_component(self, id_component=1, status=None):
         component_status = None
@@ -88,52 +86,32 @@ class CachetHq(object):
                 'components',
                 id_component
             )
-            data = parse.urlencode({
-                'status': component_status,
-            }).encode('utf-8')
-            req = request.Request(
-                url=url,
-                data=data,
-                method='PUT',
-                headers={'X-Cachet-Token': self.cachet_api_key},
-            )
-            response = request.urlopen(req)
-            content = response.read().decode('utf-8')
+            data = {'status': component_status}
+            headers={'X-Cachet-Token': CACHET_API_KEY}
+            response = requests.put(url=url, data=data, headers=headers)
+            content = response.text
             return content
 
     def set_data_metrics(self, value, timestamp, id_metric=1):
         url = '{0}/api/v1/metrics/{1}/points/'.format(
-            self.cachet_url,
+            CACHET_URL,
             id_metric
         )
 
-        data = parse.urlencode({
-            'value': value,
-            'timestamp': timestamp,
-        }).encode('utf-8')
-        req = request.Request(
-            url=url,
-            data=data,
-            method='POST',
-            headers={'X-Cachet-Token': self.cachet_api_key},
-        )
-        response = request.urlopen(req)
-
-        return json.loads(response.read().decode('utf-8'))
+        data = {'value': value,'timestamp': timestamp}
+        headers={'X-Cachet-Token': CACHET_API_KEY}
+        response = requests.post(url=url, data=data, headers=headers)
+        content = response.text
+        return response.json()
 
     def get_last_metric_point(self, id_metric):
         url = '{0}/api/v1/metrics/{1}/points/'.format(
             self.cachet_url,
             id_metric
         )
-
-        req = request.Request(
-            url=url,
-            method='GET',
-            headers={'X-Cachet-Token': self.cachet_api_key}
-        )
-        response = request.urlopen(req)
-        content = response.read().decode('utf-8')
+        headers={'X-Cachet-Token': CACHET_API_KEY}
+        response = requests.get(url=url, headers=headers)
+        content = response.text
 
         last_page = json.loads(
             content
@@ -145,13 +123,8 @@ class CachetHq(object):
             last_page
         )
 
-        req = request.Request(
-            url=url,
-            method='GET',
-            headers={'X-Cachet-Token': self.cachet_api_key},
-        )
-        response = request.urlopen(req)
-        content = response.read().decode('utf-8')
+        response = requests.get(url=url, headers={'X-Cachet-Token': CACHET_API_KEY})
+        content = response.text
 
         if json.loads(content).get('data'):
             data = json.loads(content).get('data')[0]
@@ -164,13 +137,12 @@ class CachetHq(object):
 
         return data
 
-
 class Monitor(object):
     def __init__(self, monitor_list, api_key):
         self.monitor_list = monitor_list
         self.api_key = api_key
 
-    def send_data_to_catchet(self, monitor):
+    def send_data_to_cachet(self, monitor):
         """ Posts data to Cachet API.
             Data sent is the value of last `Uptime`.
         """
@@ -181,8 +153,8 @@ class Monitor(object):
             sys.exit(1)
 
         cachet = CachetHq(
-            cachet_api_key=website_config['cachet_api_key'],
-            cachet_url=website_config['cachet_url'],
+            cachet_api_key=CACHET_API_KEY,
+            cachet_url=CACHET_URL,
         )
 
         if 'component_id' in website_config:
@@ -212,10 +184,9 @@ class Monitor(object):
                         monitor['url'],
                         monitor['id'],
                     ))
-                    self.send_data_to_catchet(monitor)
+                    self.send_data_to_cachet(monitor)
         else:
             print('ERROR: No data was returned from UptimeMonitor')
-
 
 if __name__ == "__main__":
     CONFIG = configparser.ConfigParser()
@@ -227,10 +198,15 @@ if __name__ == "__main__":
         sys.exit(1)
 
     UPTIME_ROBOT_API_KEY = None
+    CACHET_API_KEY = None
+    CACHET_URL = None
     MONITOR_DICT = {}
     for element in SECTIONS:
         if element == 'uptimeRobot':
             uptime_robot_api_key = CONFIG[element]['UptimeRobotMainApiKey']
+        elif element == 'cachet':
+            CACHET_API_KEY = CONFIG[element]['CachetApiKey']
+            CACHET_URL = CONFIG[element]['CachetUrl']
         else:
             MONITOR_DICT[element] = {
                 'cachet_api_key': CONFIG[element]['CachetApiKey'],
